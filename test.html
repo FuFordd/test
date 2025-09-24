@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard ข้อมูลพฤติกรรมลูกค้า</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6">
+    <div class="container mx-auto max-w-7xl">
+        <h1 class="text-3xl font-bold text-center mb-10 text-gray-800">
+            แดชบอร์ดข้อมูลพฤติกรรมลูกค้า
+        </h1>
+
+        <!-- Loading state -->
+        <div id="loading" class="text-center py-10">
+            <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent text-blue-500" role="status">
+                <span class="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
+            </div>
+            <p class="mt-2 text-gray-600">กำลังดึงข้อมูลจาก Google Sheets...</p>
+        </div>
+
+        <!-- Dashboard Content -->
+        <div id="dashboardContent" class="hidden">
+            <!-- Cards Section -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+                <!-- Card: จำนวนผู้ใช้งาน -->
+                <div class="bg-white rounded-xl shadow-lg p-6 text-center">
+                    <p class="text-sm font-medium text-gray-500 mb-2">จำนวนผู้ใช้งานทั้งหมด</p>
+                    <p id="userCount" class="text-5xl font-bold text-blue-600">0</p>
+                </div>
+                <!-- Card: ความพึ่งพอใจเฉลี่ย -->
+                <div class="bg-white rounded-xl shadow-lg p-6 text-center">
+                    <p class="text-sm font-medium text-gray-500 mb-2">คะแนนความพึงพอใจเฉลี่ย</p>
+                    <p id="satisfactionScore" class="text-5xl font-bold text-teal-600">0</p>
+                </div>
+            </div>
+
+            <!-- Bar Chart Section -->
+            <div class="bg-white rounded-xl shadow-lg p-6 mb-10">
+                <h2 class="text-xl font-bold mb-4 text-gray-700">จำนวนผู้ใช้งานตามแพลตฟอร์ม</h2>
+                <canvas id="platformChart"></canvas>
+            </div>
+
+            <!-- Data Table Section -->
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-700">ข้อมูลทั้งหมด</h2>
+                <div class="mb-4">
+                    <input type="text" id="searchInput" placeholder="ค้นหาข้อมูล..." class="w-full px-4 py-2 border rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow">
+                </div>
+                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <!-- Table headers will be generated dynamically -->
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody" class="bg-white divide-y divide-gray-200">
+                            <!-- Data rows will be inserted here by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const URL_DATA_SOURCE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRzMHAzdpzyO0z3ZhQjrcxSxb80eBbuz-ElNJEfIIOjYe9_psZWTrNhMN0u3IgHxWrJyyqDh4pFl7A7/pub?output=csv';
+            const dashboardContent = document.getElementById('dashboardContent');
+            const loadingIndicator = document.getElementById('loading');
+            const searchInput = document.getElementById('searchInput');
+
+            let customerData = [];
+            let myChart = null;
+
+            async function fetchDataAndRender() {
+                try {
+                    const response = await fetch(URL_DATA_SOURCE);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    const csvText = await response.text();
+                    customerData = parseCSV(csvText);
+                    if (customerData.length > 0) {
+                        renderDashboard(customerData);
+                        searchInput.value = '';
+                    } else {
+                        console.error('ไม่พบข้อมูลในไฟล์ CSV');
+                        alert('ไม่พบข้อมูลในไฟล์ กรุณาตรวจสอบและลองใหม่อีกครั้ง');
+                    }
+                } catch (error) {
+                    console.error("Error fetching or processing CSV:", error);
+                    alert('เกิดข้อผิดพลาดในการดึงข้อมูลจาก URL กรุณาตรวจสอบลิงก์');
+                } finally {
+                    loadingIndicator.classList.add('hidden');
+                }
+            }
+
+            // Function to parse the CSV data
+            function parseCSV(csv) {
+                const lines = csv.trim().split('\n');
+                const headers = lines[0].split(',').map(header => header.trim());
+                const data = lines.slice(1).map(line => {
+                    const values = line.split(',');
+                    return headers.reduce((obj, header, index) => {
+                        obj[header] = values[index] ? values[index].trim() : '';
+                        return obj;
+                    }, {});
+                });
+                return data;
+            }
+
+            // Function to render the entire dashboard
+            function renderDashboard(data) {
+                // Calculate key metrics
+                const totalUsers = data.length;
+                const totalSatisfaction = data.reduce((sum, row) => sum + parseFloat(row.satisfaction_score || 0), 0);
+                const avgSatisfaction = (totalSatisfaction / totalUsers).toFixed(2);
+
+                // Update metric cards
+                document.getElementById('userCount').innerText = totalUsers;
+                document.getElementById('satisfactionScore').innerText = avgSatisfaction;
+
+                // Render the bar chart
+                renderChart(data);
+
+                // Render the data table
+                renderTable(data);
+
+                dashboardContent.classList.remove('hidden');
+            }
+
+            // Function to render the chart
+            function renderChart(data) {
+                // Prepare data for the bar chart
+                const platformCounts = data.reduce((acc, row) => {
+                    const platform = row.preferred_platform;
+                    if (platform) {
+                        acc[platform] = (acc[platform] || 0) + 1;
+                    }
+                    return acc;
+                }, {});
+
+                const platformLabels = Object.keys(platformCounts);
+                const platformValues = Object.values(platformCounts);
+
+                if (myChart) {
+                    myChart.destroy(); // Destroy previous chart instance
+                }
+
+                const ctx = document.getElementById('platformChart').getContext('2d');
+                myChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: platformLabels,
+                        datasets: [{
+                            label: 'จำนวนผู้ใช้งาน',
+                            data: platformValues,
+                            backgroundColor: [
+                                'rgba(255, 99, 132, 0.8)',
+                                'rgba(54, 162, 235, 0.8)',
+                                'rgba(255, 206, 86, 0.8)',
+                                'rgba(75, 192, 192, 0.8)',
+                                'rgba(153, 102, 255, 0.8)',
+                                'rgba(255, 159, 64, 0.8)'
+                            ],
+                            borderColor: [
+                                'rgba(255, 99, 132, 1)',
+                                'rgba(54, 162, 235, 1)',
+                                'rgba(255, 206, 86, 1)',
+                                'rgba(75, 192, 192, 1)',
+                                'rgba(153, 102, 255, 1)',
+                                'rgba(255, 159, 64, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'จำนวนผู้ใช้งาน'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Function to render the data table
+            function renderTable(data) {
+                const dataTableBody = document.getElementById('dataTableBody');
+                const dataTableHead = document.querySelector('thead tr');
+                
+                // Clear existing table
+                dataTableBody.innerHTML = '';
+                dataTableHead.innerHTML = '';
+
+                if (data.length === 0) return;
+
+                // Generate headers
+                const headers = Object.keys(data[0]);
+                headers.forEach(header => {
+                    const th = document.createElement('th');
+                    th.scope = 'col';
+                    th.classList.add('px-6', 'py-3', 'text-left', 'text-xs', 'font-bold', 'text-gray-500', 'uppercase', 'tracking-wider');
+                    th.innerText = header.replace(/_/g, ' ').toUpperCase();
+                    dataTableHead.appendChild(th);
+                });
+
+                // Generate rows
+                data.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.classList.add('hover:bg-gray-100');
+                    headers.forEach(header => {
+                        const td = document.createElement('td');
+                        td.classList.add('px-6', 'py-4', 'whitespace-nowrap', 'text-sm', 'text-gray-500');
+                        td.innerText = row[header];
+                        tr.appendChild(td);
+                    });
+                    dataTableBody.appendChild(tr);
+                });
+            }
+
+            // Implement table filtering
+            searchInput.addEventListener('input', (e) => {
+                const searchTerm = e.target.value.toLowerCase();
+                const filteredData = customerData.filter(row =>
+                    Object.values(row).some(value =>
+                        value.toLowerCase().includes(searchTerm)
+                    )
+                );
+                renderTable(filteredData);
+            });
+
+            // Initial data fetch and render
+            fetchDataAndRender();
+        });
+    </script>
+</body>
+</html>
